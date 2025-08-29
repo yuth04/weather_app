@@ -1,69 +1,114 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Sun, Cloud, CloudRain, CloudLightning, Wind } from "lucide-react";
 
+// Map weather types to icons
+const getWeatherIcon = (main) => {
+  switch (main) {
+    case "Clear":
+      return <Sun size={60} className="text-yellow-400" />;
+    case "Clouds":
+      return <Cloud size={60} className="text-gray-300" />;
+    case "Rain":
+      return <CloudRain size={60} className="text-blue-400" />;
+    case "Thunderstorm":
+      return <CloudLightning size={60} className="text-yellow-400" />;
+    default:
+      return <Sun size={60} className="text-white" />;
+  }
+};
+
 const WeatherDashboard = () => {
-  const [city, setCity] = useState("Phnom Penh");       // Current city used for fetch
-  const [searchInput, setSearchInput] = useState(city); // Input field state
-  const [weather, setWeather] = useState(null);
-  const [hourly, setHourly] = useState([]);
-  const [daily, setDaily] = useState([]);
+  const [city, setCity] = useState("Phnom Penh");
+  const [searchInput, setSearchInput] = useState(city);
+  const [weatherData, setWeatherData] = useState({ daily: [], hourly: [] });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const apiKey = import.meta.env.VITE_WEATHER_API_KEY;
 
-  // Fetch current weather
-  const fetchWeather = async (cityName) => {
-    if (!cityName) return;
-    try {
-      const res = await fetch(
-        `https://api.openweathermap.org/data/2.5/weather?q=${cityName}&appid=${apiKey}&units=metric`
-      );
-      const data = await res.json();
-      if (data.cod !== 200) {
-        alert("City not found!");
-        return;
-      }
-      setWeather(data);
-      fetchForecast(data.coord.lat, data.coord.lon);
-    } catch (err) {
-      console.error("Error fetching weather:", err);
-    }
-  };
+  const fetchForecast = useCallback(
+    async (cityName, currentWeather) => {
+      try {
+        const res = await fetch(
+          `https://api.openweathermap.org/data/2.5/forecast?q=${cityName}&appid=${apiKey}&units=metric`
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Failed to fetch forecast.");
 
-  // Fetch hourly + daily forecast
-  const fetchForecast = async (lat, lon) => {
-    try {
-      const res = await fetch(
-        `https://api.openweathermap.org/data/2.5/onecall?lat=${lat}&lon=${lon}&exclude=minutely,alerts&units=metric&appid=${apiKey}`
-      );
-      const data = await res.json();
-      setHourly(data.hourly.slice(0, 12)); // next 12 hours
-      setDaily(data.daily.slice(0, 7));    // 7-day forecast
-    } catch (err) {
-      console.error("Error fetching forecast:", err);
-    }
-  };
+        // Daily forecast at 12:00
+        const dailyForecasts = data.list
+          .filter((item) => item.dt_txt.endsWith("12:00:00"))
+          .slice(0, 7);
+
+        // Hourly forecast from now until 12 AM
+        const now = Date.now();
+        const hourlyToday = [
+          {
+            dt: Math.floor(now / 1000),
+            main: { temp: currentWeather.main.temp },
+            weather: currentWeather.weather,
+          },
+          ...data.list.filter((item) => {
+            const itemTime = item.dt * 1000;
+            const isToday =
+              new Date(itemTime).toLocaleDateString() ===
+              new Date(now).toLocaleDateString();
+            return isToday && itemTime > now;
+          }),
+        ];
+
+        setWeatherData({
+          ...currentWeather,
+          daily: dailyForecasts,
+          hourly: hourlyToday,
+        });
+      } catch (err) {
+        console.error("Error fetching forecast:", err);
+        setError("Failed to load forecast data. Please try again later.");
+      }
+    },
+    [apiKey]
+  );
+
+  const fetchWeather = useCallback(
+    async (cityName) => {
+      if (!cityName) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(
+          `https://api.openweathermap.org/data/2.5/weather?q=${cityName}&appid=${apiKey}&units=metric`
+        );
+        const data = await res.json();
+        if (data.cod !== 200) throw new Error("City not found!");
+
+        // Fetch forecast and include current weather for hourly
+        fetchForecast(cityName, data);
+      } catch (err) {
+        console.error("Error fetching weather:", err);
+        setError(err.message || "An error occurred while fetching weather data.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [apiKey, fetchForecast]
+  );
 
   useEffect(() => {
     fetchWeather(city);
-  }, [city]);
+  }, [city, fetchWeather]);
 
-  if (!weather) return <p className="text-white p-6">Loading...</p>;
-
-  // Weather icons
-  const getWeatherIcon = (main) => {
-    switch (main) {
-      case "Clear":
-        return <Sun size={80} className="text-yellow-400" />;
-      case "Clouds":
-        return <Cloud size={80} />;
-      case "Rain":
-        return <CloudRain size={80} />;
-      case "Thunderstorm":
-        return <CloudLightning size={80} className="text-yellow-400" />;
-      default:
-        return <Sun size={80} />;
-    }
+  const handleSearch = () => {
+    if (searchInput.trim()) setCity(searchInput.trim());
   };
+
+  const current = weatherData?.weather?.[0];
+
+  if (loading)
+    return <p className="text-white p-6 text-center">Loading...</p>;
+  if (error)
+    return <p className="text-red-400 p-6 text-center">{error}</p>;
+  if (!weatherData || !current) return null;
 
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4 md:p-6">
@@ -73,106 +118,118 @@ const WeatherDashboard = () => {
           <Wind size={28} />
         </div>
         <nav className="flex md:flex-col space-x-6 md:space-x-0 md:space-y-6 text-gray-400">
-          <button className="hover:text-white">🌤️</button>
-          <button className="hover:text-white">🏙️</button>
-          <button className="hover:text-white">🗺️</button>
-          <button className="hover:text-white">⚙️</button>
+          {["🌤️", "🏙️", "🗺️", "⚙️"].map((icon, idx) => (
+            <button
+              key={idx}
+              className="hover:text-white transition-colors duration-200"
+            >
+              {icon}
+            </button>
+          ))}
         </nav>
       </aside>
 
-      {/* Main */}
+      {/* Main Content */}
       <main className="flex-1 px-2 md:px-8 mt-4 md:mt-0">
+        {/* Search */}
         <div className="flex gap-2 mb-6">
           <input
             type="text"
             placeholder="Search for cities"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && searchInput.trim() !== "") {
-                setCity(searchInput.trim());
-              }
-            }}
-            className="flex-1 text-white rounded-lg bg-gray-700 p-3 text-sm placeholder-gray-400 focus:outline-none"
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            className="flex-1 text-white rounded-lg bg-gray-700 p-3 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button
-            onClick={() => {
-              if (searchInput.trim() !== "") setCity(searchInput.trim());
-            }}
-            className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
+            onClick={handleSearch}
+            className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors"
           >
             Search
           </button>
         </div>
 
-        {/* Current weather */}
-        <div className="flex flex-col md:flex-row justify-between items-center">
+        {/* Current Weather */}
+        <div className="flex flex-col md:flex-row justify-between items-center bg-gray-800 p-6 rounded-2xl shadow-lg">
           <div className="text-center md:text-left">
-            <h1 className="text-3xl text-white font-bold">{weather.name}</h1>
-            <p className="text-gray-400">
-              Chance of rain: {weather?.rain?.["1h"] ? weather.rain["1h"] : 0}%
+            <h1 className="text-4xl font-bold">{weatherData.name}</h1>
+            <p className="text-gray-400 text-sm mt-2">
+              Chance of rain: {weatherData?.rain?.["1h"] || 0}%
             </p>
-            <h2 className="text-6xl text-white font-extrabold mt-4">
-              {Math.round(weather.main.temp)}°
+            <h2 className="text-7xl font-extrabold mt-4">
+              {Math.round(weatherData.main.temp)}°
             </h2>
           </div>
-          <div className="mt-4 md:mt-0">
-            {getWeatherIcon(weather.weather[0].main)}
+          <div className="mt-4 md:mt-0 flex flex-col items-center">
+            {getWeatherIcon(current.main)}
+            <p className="mt-2 font-semibold text-lg capitalize">{current.main}</p>
           </div>
         </div>
 
-        {/* Hourly forecast */}
+        {/* Today's Forecast */}
         <section className="mt-8">
-          <h3 className="mb-4 text-gray-400 font-semibold">TODAY’S FORECAST</h3>
-          <div className="flex overflow-x-auto gap-4 bg-gray-800 p-4 rounded-2xl">
-            {hourly.map((h, i) => (
-              <div key={i} className="flex flex-col items-center min-w-[60px]">
+          <h3 className="mb-4 text-gray-400 font-semibold text-sm">
+            TODAY’S FORECAST
+          </h3>
+          <div className="flex justify-around overflow-x-auto gap-4 p-4 rounded-2xl bg-gray-800">
+            {weatherData.hourly.map((h) => (
+              <div key={h.dt} className="flex flex-col items-center min-w-[70px]">
                 <p className="text-sm text-gray-400">
-                  {new Date(h.dt * 1000).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                  {new Date(h.dt * 1000).toLocaleTimeString([], { hour: "2-digit", hour12: true })}
                 </p>
                 <div className="my-2">{getWeatherIcon(h.weather[0].main)}</div>
-                <p className="text-lg font-semibold">{Math.round(h.temp)}</p>
+                <p className="text-white font-semibold capitalize text-sm">
+                  {h.weather[0].main}
+                </p>
+                <p className="text-lg font-bold">{Math.round(h.main.temp)}°</p>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Air conditions */}
+        {/* Air Conditions */}
         <section className="mt-8">
-          <h3 className="mb-4 text-gray-400 font-semibold">AIR CONDITIONS</h3>
+          <h3 className="mb-4 text-gray-400 font-semibold text-sm">AIR CONDITIONS</h3>
           <div className="bg-gray-800 rounded-2xl p-6 grid grid-cols-2 md:grid-cols-4 gap-6">
             <div>
-              <p className="text-gray-400">Real Feel</p>
-              <h4 className="text-xl font-bold">{Math.round(weather.main.feels_like)}°</h4>
+              <p className="text-gray-400 text-sm">Real Feel</p>
+              <h4 className="text-xl font-bold">{Math.round(weatherData.main.feels_like)}°</h4>
             </div>
             <div>
-              <p className="text-gray-400">Wind</p>
-              <h4 className="text-xl font-bold">{weather.wind.speed} m/s</h4>
+              <p className="text-gray-400 text-sm">Wind</p>
+              <h4 className="text-xl font-bold">{weatherData.wind.speed} m/s</h4>
             </div>
             <div>
-              <p className="text-gray-400">Humidity</p>
-              <h4 className="text-xl font-bold">{weather.main.humidity}%</h4>
+              <p className="text-gray-400 text-sm">Humidity</p>
+              <h4 className="text-xl font-bold">{weatherData.main.humidity}%</h4>
             </div>
             <div>
-              <p className="text-gray-400">UV Index</p>
-              <h4 className="text-xl font-bold">{hourly[0]?.uvi || "-"}</h4>
+              <p className="text-gray-400 text-sm">UV Index</p>
+              <h4 className="text-xl font-bold">{weatherData.hourly?.[0]?.uvi || "N/A"}</h4>
             </div>
           </div>
         </section>
       </main>
 
-      {/* 7-day forecast */}
+      {/* 7-Day Forecast */}
       <aside className="w-full md:w-64 mt-6 md:mt-0 md:ml-8">
-        <h3 className="mb-4 text-gray-400 font-semibold">7-DAY FORECAST</h3>
+        <h3 className="mb-4 text-gray-400 font-semibold text-sm">7-DAY FORECAST</h3>
         <div className="bg-gray-800 rounded-2xl p-4 space-y-4">
-          {daily.map((d, i) => (
-            <div key={i} className="flex justify-between items-center">
-              <span>{new Date(d.dt * 1000).toLocaleDateString("en-US", { weekday: "short" })}</span>
-              <span>{getWeatherIcon(d.weather[0].main)}</span>
-              <span>{Math.round(d.temp.max)}/{Math.round(d.temp.min)}</span>
+          {weatherData.daily.map((d) => (
+            <div
+              key={d.dt}
+              className="flex justify-between items-center p-3 rounded-lg bg-gray-700/50"
+            >
+              <span className="text-sm font-medium">
+                {new Date(d.dt * 1000).toLocaleDateString("en-US", { weekday: "short" })}
+              </span>
+              <div className="flex items-center gap-2">
+                {getWeatherIcon(d.weather[0].main)}
+                <span className="text-sm font-semibold capitalize">{d.weather[0].main}</span>
+              </div>
+              <span className="text-sm font-semibold">
+                {Math.round(d.main.temp_max)}° / {Math.round(d.main.temp_min)}°
+              </span>
             </div>
           ))}
         </div>

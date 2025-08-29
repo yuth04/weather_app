@@ -3,6 +3,7 @@ import WeatherDashboard from './components/WeatherDashboard'
 function App() {
   return (
    <div>
+    
     <WeatherDashboard />
    </div>
   )
