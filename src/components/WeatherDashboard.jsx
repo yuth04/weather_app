@@ -26,6 +26,24 @@ const WeatherDashboard = () => {
 
   const apiKey = import.meta.env.VITE_WEATHER_API_KEY;
 
+  // Updated to fetch both daily forecast and UV index
+  const fetchDailyAndUv = useCallback(async (lat, lon) => {
+    try {
+      const res = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,weather_code,uv_index_max&hourly=uv_index&timezone=auto&forecast_days=7`
+      );
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.reason || "Failed to fetch 7-day forecast.");
+      }
+      return data;
+    } catch (err) {
+      console.error("Error fetching 7-day forecast:", err);
+      setError("Failed to load 7-day forecast data. Please try again later.");
+      return null;
+    }
+  }, []);
+
   const fetchForecast = useCallback(
     async (cityName, currentWeather) => {
       try {
@@ -33,14 +51,8 @@ const WeatherDashboard = () => {
           `https://api.openweathermap.org/data/2.5/forecast?q=${cityName}&appid=${apiKey}&units=metric`
         );
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Failed to fetch forecast.");
+        if (!res.ok) throw new Error(data.message || "Failed to fetch hourly forecast.");
 
-        // Daily forecast at 12:00
-        const dailyForecasts = data.list
-          .filter((item) => item.dt_txt.endsWith("12:00:00"))
-          .slice(0, 7);
-
-        // Hourly forecast from now until 12 AM
         const now = Date.now();
         const hourlyToday = [
           {
@@ -57,17 +69,34 @@ const WeatherDashboard = () => {
           }),
         ];
 
+        // Fetch both daily and UV data
+        const dailyAndUvData = await fetchDailyAndUv(
+          currentWeather.coord.lat,
+          currentWeather.coord.lon
+        );
+
+        // Get the current UV Index from the hourly data
+        const currentUvIndex = dailyAndUvData?.hourly?.uv_index?.[0] || "N/A";
+
         setWeatherData({
           ...currentWeather,
-          daily: dailyForecasts,
+          daily: dailyAndUvData?.daily ? dailyAndUvData.daily.time.map((t, i) => ({
+            dt: new Date(t).getTime() / 1000,
+            main: {
+              temp_max: dailyAndUvData.daily.temperature_2m_max[i],
+              temp_min: dailyAndUvData.daily.temperature_2m_min[i]
+            },
+            weather: [{ main: "Clouds" }], // Placeholder, you may need a weather code converter
+          })) : [],
           hourly: hourlyToday,
+          uvIndex: currentUvIndex
         });
       } catch (err) {
         console.error("Error fetching forecast:", err);
         setError("Failed to load forecast data. Please try again later.");
       }
     },
-    [apiKey]
+    [apiKey, fetchDailyAndUv]
   );
 
   const fetchWeather = useCallback(
@@ -82,7 +111,6 @@ const WeatherDashboard = () => {
         const data = await res.json();
         if (data.cod !== 200) throw new Error("City not found!");
 
-        // Fetch forecast and include current weather for hourly
         fetchForecast(cityName, data);
       } catch (err) {
         console.error("Error fetching weather:", err);
@@ -205,7 +233,7 @@ const WeatherDashboard = () => {
             </div>
             <div>
               <p className="text-gray-400 text-sm">UV Index</p>
-              <h4 className="text-xl font-bold">{weatherData.hourly?.[0]?.uvi || "N/A"}</h4>
+              <h4 className="text-xl font-bold">{weatherData.uvIndex}</h4>
             </div>
           </div>
         </section>
